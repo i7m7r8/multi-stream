@@ -7,7 +7,7 @@ const SELF_URL = "https://YOUR-SITE.pages.dev"; // update after first deploy
 
 const manifest = {
   id: "community.multistream.v14",
-  version: "14.5.0",
+  version: "14.7.0",
   name: "MultiStream",
   description: "Bollywood, Hollywood, TV Shows & Anime",
   logo: "https://i.imgur.com/uwDqNDd.png",
@@ -101,17 +101,54 @@ async function fetchJson(url) {
   return r.json();
 }
 
+// ── apibay fetch with mirror fallbacks ───────────────────────
+const APIBAY_MIRRORS = [
+  "https://apibay.org",
+  "https://apibay.pro",
+  "https://piratebayproxy.live",
+];
+
+async function fetchWithFallback(url) {
+  // Try each mirror
+  const urlObj = new URL(url);
+  const path = urlObj.pathname + urlObj.search;
+  
+  for (const mirror of APIBAY_MIRRORS) {
+    try {
+      const mirrorUrl = mirror + path;
+      const ua = UAS[Math.floor(Math.random() * UAS.length)];
+      const r = await fetch(mirrorUrl, {
+        headers: {
+          "User-Agent": ua,
+          "Accept": "application/json, */*",
+          "Referer": "https://www.google.com/",
+          "Origin": "https://thepiratebay.org",
+        },
+        cf: { cacheTtl: 30 }
+      });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (Array.isArray(data) && data.length > 0 && data[0].id !== "0") return data;
+    } catch(e) { continue; }
+  }
+  return [];
+}
+
 // ── apibay search ─────────────────────────────────────────────
 async function tpbSearch(q, cat) {
   try {
     const t1 = `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=${cat}`;
     const t2 = `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=0`;
-    const [r1, r2] = await Promise.allSettled([fetchJson(t1), fetchJson(t2)]);
+    // Try apibay directly first, fallback to mirror sites
+    const [r1, r2] = await Promise.allSettled([
+      fetchWithFallback(t1),
+      fetchWithFallback(t2)
+    ]);
     const seen = new Set();
     const merged = [];
     for (const r of [r1, r2]) {
-      if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
-      for (const t of r.value) {
+      const arr = r.status === "fulfilled" ? (Array.isArray(r.value) ? r.value : []) : [];
+      for (const t of arr) {
         if (!t.info_hash || t.id === "0" || seen.has(t.info_hash)) continue;
         seen.add(t.info_hash);
         merged.push(t);

@@ -7,7 +7,7 @@ const SELF_URL = "https://YOUR-SITE.pages.dev"; // update after first deploy
 
 const manifest = {
   id: "community.multistream.v14",
-  version: "14.9.0",
+  version: "14.10.0",
   name: "MultiStream",
   description: "Bollywood, Hollywood, TV Shows & Anime",
   logo: "https://i.imgur.com/uwDqNDd.png",
@@ -242,6 +242,16 @@ export async function onRequest({ request }) {
 
   if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
 
+  // DEBUG
+  if (path === "/debug") {
+    try {
+      const results = await csvSearch("Mr Robot S01E01");
+      return jsonResp({ count: results.length, first: results[0] || null });
+    } catch(e) {
+      return jsonResp({ error: String(e) });
+    }
+  }
+
   // MANIFEST
   if (path === "/" || path === "/manifest.json") return jsonResp(manifest);
 
@@ -383,7 +393,7 @@ export async function onRequest({ request }) {
 
     const streams = buildStreams(results, refHash);
     if (!streams.length) return jsonResp({ streams: [{
-      name: "MultiStream", title: `${titleQuery}\n⚡ Play`,
+      name: "MultiStream", title: `${titleQuery}\n⚡ Play [${results.length} found]`,
       infoHash: refHash || "0000000000000000000000000000000000000000",
       sources: TRACKERS, behaviorHints: { notWebReady: false }
     }]});

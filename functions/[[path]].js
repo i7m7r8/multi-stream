@@ -7,7 +7,7 @@ const SELF_URL = "https://YOUR-SITE.pages.dev"; // update after first deploy
 
 const manifest = {
   id: "community.multistream.v14",
-  version: "14.13.0",
+  version: "14.14.0",
   name: "MultiStream",
   description: "Bollywood, Hollywood, TV Shows & Anime",
   logo: "https://i.imgur.com/uwDqNDd.png",
@@ -122,27 +122,40 @@ async function csvSearch(q, size = 20) {
   } catch(e) { return []; }
 }
 
-// ── apibay via corsproxy (higher seeds!) ─────────────────────
+// ── apibay via Vercel proxy (high seeds!) ────────────────────
+const VERCEL_PROXY = "https://test-repo-six-sepia.vercel.app/proxy";
+
 async function apibaySearch(q, cat) {
   try {
-    const target = `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=${cat}`;
-    // corsproxy.io works from Cloudflare Pages
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(target)}`;
-    const r = await fetch(proxyUrl, {
-      headers: { "Accept": "application/json", "User-Agent": UAS[0] },
-      cf: { cacheTtl: 60 }
-    });
-    if (!r.ok) return [];
-    const data = await r.json();
-    if (!Array.isArray(data) || data[0]?.id === "0") return [];
-    return data.map(t => ({
-      info_hash: (t.info_hash || "").toLowerCase(),
-      name: t.name || "",
-      seeders: String(t.seeders || 0),
-      size: String(t.size || 0),
-      id: String(t.id || "1"),
-      category: String(t.category || cat)
-    })).filter(t => t.info_hash && parseInt(t.seeders) > 0);
+    const t1 = `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=${cat}`;
+    const t2 = `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=0`;
+    const [r1, r2] = await Promise.allSettled([
+      fetch(`${VERCEL_PROXY}?url=${encodeURIComponent(t1)}`, {
+        headers: { "User-Agent": UAS[0] }, cf: { cacheTtl: 60 }
+      }).then(r => r.json()),
+      fetch(`${VERCEL_PROXY}?url=${encodeURIComponent(t2)}`, {
+        headers: { "User-Agent": UAS[0] }, cf: { cacheTtl: 60 }
+      }).then(r => r.json())
+    ]);
+    const seen = new Set();
+    const merged = [];
+    for (const r of [r1, r2]) {
+      if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
+      for (const t of r.value) {
+        if (!t.info_hash || t.id === "0" || seen.has(t.info_hash)) continue;
+        seen.add(t.info_hash);
+        merged.push({
+          info_hash: t.info_hash.toLowerCase(),
+          name: t.name || "",
+          seeders: String(t.seeders || 0),
+          size: String(t.size || 0),
+          id: String(t.id || "1"),
+          category: String(t.category || cat)
+        });
+      }
+    }
+    merged.sort((a, b) => parseInt(b.seeders) - parseInt(a.seeders));
+    return merged.filter(t => parseInt(t.seeders) > 0);
   } catch(e) { return []; }
 }
 

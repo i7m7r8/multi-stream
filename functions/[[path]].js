@@ -7,7 +7,7 @@ const SELF_URL = "https://YOUR-SITE.pages.dev"; // update after first deploy
 
 const manifest = {
   id: "community.multistream.v14",
-  version: "14.11.0",
+  version: "14.12.0",
   name: "MultiStream",
   description: "Bollywood, Hollywood, TV Shows & Anime",
   logo: "https://i.imgur.com/uwDqNDd.png",
@@ -383,22 +383,22 @@ export async function onRequest({ request }) {
     if (season !== null && episode !== null) {
       const epQ     = `${titleQuery} S${String(season).padStart(2,"0")}E${String(episode).padStart(2,"0")}`;
       const seasonQ = `${titleQuery} S${String(season).padStart(2,"0")}`;
-      const [r1, r2] = await Promise.allSettled([tpbSearch(epQ, cat), tpbSearch(seasonQ, cat)]);
+      const [r1, r2] = await Promise.allSettled([
+        csvSearch(epQ),
+        csvSearch(seasonQ)
+      ]);
       const seen = new Set();
       for (const r of [r1, r2]) {
         if (r.status !== "fulfilled") continue;
         for (const t of r.value) {
           if (!t.info_hash || seen.has(t.info_hash.toLowerCase())) continue;
-          const titleWords = titleQuery.toLowerCase().split(" ").filter(w => w.length > 2);
-          const tname = t.name.toLowerCase();
-          const matchCount = titleWords.filter(w => tname.includes(w)).length;
-          if (matchCount < Math.ceil(titleWords.length * 0.6)) continue;
           seen.add(t.info_hash.toLowerCase());
           results.push(t);
         }
       }
+      results.sort((a, b) => parseInt(b.seeders) - parseInt(a.seeders));
     } else {
-      results = await tpbSearch(titleQuery, cat).catch(() => []);
+      results = await csvSearch(titleQuery);
     }
 
     const streams = buildStreams(results, refHash);

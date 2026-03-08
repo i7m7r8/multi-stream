@@ -7,7 +7,7 @@ const SELF_URL = "https://YOUR-SITE.pages.dev"; // update after first deploy
 
 const manifest = {
   id: "community.multistream.v14",
-  version: "14.10.0",
+  version: "14.11.0",
   name: "MultiStream",
   description: "Bollywood, Hollywood, TV Shows & Anime",
   logo: "https://i.imgur.com/uwDqNDd.png",
@@ -246,7 +246,17 @@ export async function onRequest({ request }) {
   if (path === "/debug") {
     try {
       const results = await csvSearch("Mr Robot S01E01");
-      return jsonResp({ count: results.length, first: results[0] || null });
+      // Also test TMDB
+      const tmdbInfo = await tmdbFindByImdb("tt4158110");
+      // Test buildStreams
+      const streams = buildStreams(results, "");
+      return jsonResp({ 
+        csv_count: results.length, 
+        first: results[0] || null,
+        tmdb_name: tmdbInfo?.name || "FAILED",
+        streams_count: streams.length,
+        first_stream: streams[0] || null
+      });
     } catch(e) {
       return jsonResp({ error: String(e) });
     }

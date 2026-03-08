@@ -7,7 +7,7 @@ const SELF_URL = "https://YOUR-SITE.pages.dev"; // update after first deploy
 
 const manifest = {
   id: "community.multistream.v14",
-  version: "14.7.0",
+  version: "14.8.0",
   name: "MultiStream",
   description: "Bollywood, Hollywood, TV Shows & Anime",
   logo: "https://i.imgur.com/uwDqNDd.png",
@@ -101,35 +101,75 @@ async function fetchJson(url) {
   return r.json();
 }
 
-// ── apibay fetch with mirror fallbacks ───────────────────────
-const APIBAY_MIRRORS = [
+// ── apibay fetch — try multiple approaches ───────────────────
+const APIBAY_ENDPOINTS = [
   "https://apibay.org",
   "https://apibay.pro",
-  "https://piratebayproxy.live",
 ];
 
+// TPB-compatible public JSON APIs as fallback
+async function fetchFromJackett(q, cat) {
+  // Use Knaben public API — indexes TPB and many other sources
+  try {
+    const r = await fetch(
+      `https://knaben.eu/api/v1/search?query=${encodeURIComponent(q)}&categories=${cat === "207" || cat === "200" ? "2000" : cat === "205" ? "5000" : "0"}&orderBy=seeders&orderDirection=desc&size=20`,
+      { headers: { "Accept": "application/json", "User-Agent": UAS[0] }, cf: { cacheTtl: 60 } }
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    const hits = data?.hits?.hits || data?.results || data?.data || [];
+    return hits.map(h => ({
+      info_hash: h._source?.infoHash || h.infoHash || h.hash || "",
+      name: h._source?.title || h.title || h.name || "",
+      seeders: String(h._source?.seeders || h.seeders || 0),
+      size: String(h._source?.size || h.size || 0),
+      id: h._id || "1",
+      category: String(cat)
+    })).filter(t => t.info_hash && parseInt(t.seeders) > 0);
+  } catch(e) { return []; }
+}
+
+async function fetchFromProwlarr(q) {
+  // Torrentio public search API
+  try {
+    const r = await fetch(
+      `https://torrentio.strem.fun/search?query=${encodeURIComponent(q)}`,
+      { headers: { "Accept": "application/json" }, cf: { cacheTtl: 60 } }
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data?.streams || []).map(s => ({
+      info_hash: s.infoHash || "",
+      name: s.title?.split("\n")[0] || q,
+      seeders: String(s.title?.match(/👤 (\d+)/)?.[1] || 1),
+      size: "0",
+      id: "1",
+      category: "0"
+    })).filter(t => t.info_hash);
+  } catch(e) { return []; }
+}
+
 async function fetchWithFallback(url) {
-  // Try each mirror
   const urlObj = new URL(url);
   const path = urlObj.pathname + urlObj.search;
   
-  for (const mirror of APIBAY_MIRRORS) {
-    try {
-      const mirrorUrl = mirror + path;
-      const ua = UAS[Math.floor(Math.random() * UAS.length)];
-      const r = await fetch(mirrorUrl, {
-        headers: {
-          "User-Agent": ua,
-          "Accept": "application/json, */*",
-          "Referer": "https://www.google.com/",
-          "Origin": "https://thepiratebay.org",
-        },
-        cf: { cacheTtl: 30 }
-      });
-      if (!r.ok) continue;
-      const data = await r.json();
-      if (Array.isArray(data) && data.length > 0 && data[0].id !== "0") return data;
-    } catch(e) { continue; }
+  // Try all apibay endpoints with different headers
+  for (const base of APIBAY_ENDPOINTS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ua = UAS[Math.floor(Math.random() * UAS.length)];
+        const headers = attempt === 0
+          ? { "User-Agent": ua, "Accept": "application/json", "Referer": "https://thepiratebay.org/", "X-Forwarded-For": `${Math.floor(Math.random()*200)+10}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}` }
+          : { "User-Agent": ua, "Accept": "*/*", "Origin": "https://thepiratebay.org" };
+        const r = await fetch(base + path, {
+          headers,
+          cf: { cacheTtl: 30, cacheEverything: false }
+        });
+        if (!r.ok) continue;
+        const data = await r.json();
+        if (Array.isArray(data) && data.length > 0 && data[0].id !== "0") return data;
+      } catch(e) { continue; }
+    }
   }
   return [];
 }

@@ -320,6 +320,52 @@ export async function onRequest({ request }) {
     }
   }
 
+  // STREAM-PROXY — pipes any video URL with CORS + Range support
+  // Cloudflare IPs are not blocked by Torrentio unlike Vercel datacenter IPs
+  if (path === "/stream-proxy") {
+    const targetUrl = url.searchParams.get("url");
+    if (!targetUrl || (!targetUrl.startsWith("https://") && !targetUrl.startsWith("http://"))) {
+      return new Response(JSON.stringify({ error: "invalid url" }), { status: 400, headers: CORS });
+    }
+
+    const proxyHeaders = new Headers({
+      "User-Agent": UAS[0],
+      "Accept": "*/*",
+    });
+
+    // Forward Range header for seeking/scrubbing
+    const range = request.headers.get("Range");
+    if (range) proxyHeaders.set("Range", range);
+
+    try {
+      const upstream = await fetch(targetUrl, {
+        headers: proxyHeaders,
+        redirect: "follow",
+        cf: { cacheTtl: 0 }
+      });
+
+      const respHeaders = new Headers({
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+      });
+
+      // Forward useful upstream headers
+      for (const h of ["content-type","content-length","content-range","accept-ranges","last-modified","etag"]) {
+        const v = upstream.headers.get(h);
+        if (v) respHeaders.set(h, v);
+      }
+
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: respHeaders
+      });
+    } catch(e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: CORS });
+    }
+  }
+
   // MANIFEST
   if (path === "/" || path === "/manifest.json") return jsonResp(manifest);
 

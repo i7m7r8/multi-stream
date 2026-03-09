@@ -186,8 +186,8 @@ async function tpbSearch(q, cat) {
     const t2 = `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=0`;
     // Try apibay directly first, fallback to mirror sites
     const [r1, r2] = await Promise.allSettled([
-      fetchWithFallback(t1),
-      fetchWithFallback(t2)
+      fetchJson(t1),
+      fetchJson(t2)
     ]);
     const seen = new Set();
     const merged = [];
@@ -281,8 +281,9 @@ function buildStreams(results, refHash) {
     const isPack  = epMatch && !epMatch[2];
     const stream  = {
       name: `MultiStream\n${q}`,
-      title: `${short}\n👤 ${sd} 💾 ${sz}`,
+      title: `${short}\n👤${sd} 💾${sz}`,
       infoHash: h,
+      fileIdx: 0,
       sources: TRACKERS,
       behaviorHints: { notWebReady: false }
     };
@@ -406,8 +407,65 @@ export async function onRequest({ request }) {
     }});
   }
 
-  // STREAM
-  const sm = path.match(/^\/stream\/([^/]+)\/([^/]+?)\.json$/);
+  // STREAMS (frontend-compatible routes)
+  // Movies:  /streams/{imdbId}
+  // TV:      /streams/{imdbId}/{season}/{episode}
+  const stm = path.match(/^\/streams\/(tt\d+)(?:\/(\d+)\/(\d+))?$/);
+  if (stm) {
+    const [, imdbId, sStr, eStr] = stm;
+    const hasSE  = sStr !== undefined && eStr !== undefined;
+    const season  = hasSE ? parseInt(sStr)  : null;
+    const episode = hasSE ? parseInt(eStr) : null;
+    const type    = hasSE ? "series" : "movie";
+    const info    = await tmdbFindByImdb(imdbId).catch(() => null);
+    const titleQuery = info?.name || "";
+    if (!titleQuery) return jsonResp({ streams: [] });
+    const cat = hasSE ? "205" : "207";
+    let results = [];
+    if (hasSE) {
+      const epQ     = `${titleQuery} S${String(season).padStart(2,"0")}E${String(episode).padStart(2,"0")}`;
+      const seasonQ = `${titleQuery} S${String(season).padStart(2,"0")}`;
+      const [r1, r2] = await Promise.allSettled([searchAll(epQ, cat), searchAll(seasonQ, cat)]);
+      const seen = new Set();
+      for (const r of [r1, r2]) {
+        if (r.status !== "fulfilled") continue;
+        for (const t of r.value) {
+          if (!t.info_hash || seen.has(t.info_hash.toLowerCase())) continue;
+          seen.add(t.info_hash.toLowerCase());
+          results.push(t);
+        }
+      }
+      results.sort((a, b) => parseInt(b.seeders) - parseInt(a.seeders));
+    } else {
+      results = await searchAll(titleQuery, cat);
+    }
+    const streams = buildStreams(results, "");
+    return jsonResp({ streams });
+  }
+
+  // SUBTITLES: /subtitles/{imdbId}?lang=eng
+  const subm = path.match(/^\/subtitles\/(tt\d+)$/);
+  if (subm) {
+    const [, imdbId] = subm;
+    const lang = url.searchParams.get("lang") || "eng";
+    try {
+      const r = await fetch(
+        `https://rest.opensubtitles.org/search/imdbid-${imdbId.replace("tt","")}/sublanguageid-${lang}`,
+        { headers: { "X-User-Agent": "TemporaryUserAgent", "User-Agent": UAS[0] } }
+      );
+      if (!r.ok) return jsonResp([]);
+      const subs = await r.json();
+      const out = (Array.isArray(subs) ? subs : []).slice(0, 10).map(s => ({
+        name:   s.SubFileName || "",
+        format: (s.SubFormat || "srt").toLowerCase(),
+        url:    s.SubDownloadLink || ""
+      })).filter(s => s.url);
+      return jsonResp(out);
+    } catch(e) { return jsonResp([]); }
+  }
+
+  // STREAM (Stremio-compatible route kept for backward compat)
+  // /stream/{type}/{id}.json
   if (sm) {
     const [, type, rawId] = sm;
     const decoded = decodeURIComponent(rawId);
